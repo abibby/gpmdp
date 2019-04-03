@@ -2,7 +2,6 @@ package gpmdp
 
 import (
 	"encoding/json"
-	"sync"
 
 	"github.com/gorilla/websocket"
 )
@@ -37,35 +36,36 @@ type Info struct {
 	Volume     int     `json:"volume"`
 }
 
-type message struct {
+type rawEvent struct {
 	Channel string          `json:"channel"`
 	Payload json.RawMessage `json:"payload"`
+}
+type Event struct {
+	Channel string      `json:"channel"`
+	Payload interface{} `json:"payload"`
+}
+
+func (e *Event) Track() (track *Track, ok bool) {
+	if e.Channel != "track" {
+		return nil, false
+	}
+	track, ok = e.Payload.(*Track)
+	return track, ok
+}
+
+func (e *Event) Playing() (playing bool, ok bool) {
+	if e.Channel != "playState" {
+		return false, false
+	}
+	playing, ok = e.Payload.(bool)
+	return playing, ok
 }
 
 // https://github.com/MarshallOfSound/Google-Play-Music-Desktop-Player-UNOFFICIAL-/blob/master/docs/PlaybackAPI_WebSocket.md
 
-//go:generate go run gen.go error Error error
-
-//go:generate go run gen.go bool Playing playing
-//go:generate go run gen.go *Track Track track
-//go:generate go run gen.go *Rating Rating rating
-//go:generate go run gen.go *Time Time time
-
 type GPMDP struct {
-	errorCBs    []func(error)
-	errorCBsMtx sync.RWMutex
-
-	playingCBs    []func(bool)
-	playingCBsMtx sync.RWMutex
-
-	trackCBs    []func(*Track)
-	trackCBsMtx sync.RWMutex
-
-	ratingCBs    []func(*Rating)
-	ratingCBsMtx sync.RWMutex
-
-	timeCBs    []func(*Time)
-	timeCBsMtx sync.RWMutex
+	Error chan error
+	Event chan *Event
 }
 
 func Connect() (*GPMDP, error) {
@@ -73,32 +73,49 @@ func Connect() (*GPMDP, error) {
 	if err != nil {
 		return nil, err
 	}
-	msg := &message{}
-	g := &GPMDP{}
+	msg := &rawEvent{}
+	g := &GPMDP{
+		Error: make(chan error),
+		Event: make(chan *Event),
+	}
 	go func() {
 		for {
 			err := conn.ReadJSON(msg)
 			if err != nil {
-				g.pushError(err)
+				go g.pushError(err)
+				continue
 			}
 
+			var payload interface{}
 			switch msg.Channel {
 			case "track":
 				track := &Track{}
 				err := json.Unmarshal(msg.Payload, track)
 				if err != nil {
-					g.pushError(err)
+					go g.pushError(err)
+					continue
 				}
-				g.pushTrack(track)
+				payload = track
 			case "playState":
 				var playing bool
 				err := json.Unmarshal(msg.Payload, &playing)
 				if err != nil {
-					g.pushError(err)
+					go g.pushError(err)
+					continue
 				}
-				g.pushPlaying(playing)
+				payload = playing
+			default:
+				continue
+			}
+			g.Event <- &Event{
+				Channel: msg.Channel,
+				Payload: payload,
 			}
 		}
 	}()
 	return g, nil
+}
+
+func (g *GPMDP) pushError(err error) {
+	g.Error <- err
 }

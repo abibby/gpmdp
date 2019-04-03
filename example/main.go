@@ -12,13 +12,20 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	playing := false
 	track := &gpmdp.Track{}
+	playing := false
 	for {
 		select {
-		case track = <-g.Track():
-		case playing = <-g.Playing():
+		case err := <-g.Error:
+			log.Fatal(err)
+		case ev := <-g.Event:
+			if t, ok := ev.Track(); ok {
+				track = t
+			}
+			if p, ok := ev.Playing(); ok {
+				playing = p
+			}
+			fmt.Printf("%5v %s - %s\n", playing, track.Title, track.Artist)
 		}
-		fmt.Printf("%5v %s - %s\n", playing, track.Title, track.Artist)
 	}
 }
