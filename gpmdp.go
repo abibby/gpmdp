@@ -66,6 +66,8 @@ func (e *Event) Playing() (playing bool, ok bool) {
 type GPMDP struct {
 	Error chan error
 	Event chan *Event
+
+	open bool
 }
 
 func Connect() (*GPMDP, error) {
@@ -77,9 +79,10 @@ func Connect() (*GPMDP, error) {
 	g := &GPMDP{
 		Error: make(chan error),
 		Event: make(chan *Event),
+		open:  true,
 	}
 	go func() {
-		for {
+		for g.open {
 			err := conn.ReadJSON(msg)
 			if err != nil {
 				go g.pushError(err)
@@ -114,6 +117,10 @@ func Connect() (*GPMDP, error) {
 		}
 	}()
 	return g, nil
+}
+
+func (g *GPMDP) Close() {
+	g.open = false
 }
 
 func (g *GPMDP) pushError(err error) {
